@@ -114,6 +114,15 @@ export type IrcEvent =
 /** Listener signature for the service event stream. */
 export type IrcEventHandler = (event: IrcEvent) => void;
 
+/** The full service surface the UI depends on (IRC commands + auth helpers). */
+export interface ClientService extends IrcCommands {
+  register(password: string, email?: string): void;
+  identify(account: string, password: string): void;
+}
+
+/** Factory the UI uses to create a service; swappable in tests. */
+export type ServiceFactory = (cfg: Config, handler: IrcEventHandler) => ClientService;
+
 /** What the UI can ask the service to do. */
 export interface IrcCommands {
   connect(): void;

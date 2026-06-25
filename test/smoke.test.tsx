@@ -5,7 +5,7 @@ import { render } from 'ink-testing-library';
 import { App } from '../src/ui/App.js';
 import type { Config } from '../src/types.js';
 
-const cfg: Config = {
+const base: Config = {
   host: 'irc.austn.net',
   port: 6697,
   tls: true,
@@ -15,7 +15,17 @@ const cfg: Config = {
   channels: ['#general'],
 };
 
-test('App renders the achat banner and connection target', () => {
+test('with no account, App shows the first-run chooser', () => {
+  const { lastFrame, unmount } = render(<App config={base} autoConnect={false} />);
+  const frame = lastFrame() ?? '';
+  assert.match(frame, /achat/);
+  assert.match(frame, /Log in/);
+  assert.match(frame, /guest/i);
+  unmount();
+});
+
+test('with an account, App goes straight to the main view header', () => {
+  const cfg: Config = { ...base, account: 'austin', password: 'secret' };
   const { lastFrame, unmount } = render(<App config={cfg} autoConnect={false} />);
   const frame = lastFrame() ?? '';
   assert.match(frame, /achat/);

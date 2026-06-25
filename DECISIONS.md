@@ -50,9 +50,33 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   captured file, so service-level verification is the source of truth; a pty smoke confirms
   the TUI launches without crashing.
 
+## Phase 2 — Auth: SASL + guest + registration
+
+- **SASL PLAIN via irc-framework's `account: {account, password}`.** · The lib negotiates
+  the `sasl` CAP and AUTHENTICATEs for us; `sasl_disconnect_on_fail` left false so a bad
+  login degrades to guest instead of dropping. Verified end-to-end against irc.austn.net
+  (`scripts/verify-auth.mjs`): registered a fresh account, reconnected, server confirmed
+  `account=<nick>`.
+- **First-run chooser** (Log in / Register / Guest) shown only when no account is configured.
+  With account+password present we skip straight to SASL. · Matches the brief's connect logic.
+- **Registration uses NickServ** (`/msg NickServ REGISTER <pw> [email]`). Ergo replied
+  "Account created" / "You're now logged in as …". · NickServ replies are NOTICEs *from a
+  nick*, which the service routes as `message` events (not `notice`), so the App feeds
+  NickServ messages into the success detector. Account name == the nick used at registration.
+- **"Offer to save" = Ctrl-S**, not a blocking modal. · After a successful login/register the
+  status line shows "Ctrl-S save credentials"; pressing it writes `config.json` (0600). Lower
+  friction than a yes/no prompt and reusable as a general save.
+- **SASL-fail surfaced, not silently downgraded.** · On a login attempt that lands as guest,
+  the buffer shows a red "SASL did not log you in — connected as guest" line. Per brief.
+- **Service factory is injectable** (`createService` prop) so the auth flow is unit-tested
+  with a fake (no sockets): guest connect, register form → NickServ → success detection.
+
 ### Deferred / revisit
 
 - SASL EXTERNAL (CertFP) — stretch; default to SASL PLAIN over TLS first.
+- Registration success/failure is detected by regex on NickServ's text; if a server uses
+  required email verification, the account won't be usable until verified — surfaced to the
+  user via the raw NickServ message regardless.
 - `tsup`/`npm publish` packaging — after the client is feature-complete.
 - Full auto-reconnect/rejoin behaviour is wired (irc-framework `auto_reconnect`) but
   exercised/verified in Phase 8.

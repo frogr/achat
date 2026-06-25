@@ -1,14 +1,19 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
-import type { Config, IrcEvent } from '../types.js';
-import { hasAccount } from '../config.js';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Box, Text, useInput, useStdout } from 'ink';
+import type { Config, IrcEvent, ServiceFactory } from '../types.js';
+import { hasAccount, saveConfig } from '../config.js';
 import { IrcService } from '../irc/service.js';
+import { Chooser, LoginForm, RegisterForm, type ChooserChoice } from './auth/AuthScreens.js';
 
 export interface AppProps {
   config: Config;
   /** Set false in tests to avoid opening a real socket. */
   autoConnect?: boolean;
+  /** Service factory; defaults to the real IrcService. Injectable for tests. */
+  createService?: ServiceFactory;
 }
+
+const defaultFactory: ServiceFactory = (cfg, handler) => new IrcService(cfg, handler);
 
 interface LogLine {
   id: number;
@@ -17,32 +22,42 @@ interface LogLine {
   dim?: boolean;
 }
 
-/**
- * Phase 1 app: connect to the server and render incoming events as a raw
- * scrolling log. The three-pane UI replaces this body in later phases.
- */
-export function App({ config, autoConnect = true }: AppProps): React.ReactElement {
-  const { exit } = useApp();
+type Phase = 'choosing' | 'login' | 'register' | 'main';
+type AuthIntent = 'guest' | 'login' | 'register';
+
+const SUCCESS_RE = /(registered|created|now logged in|successfully|verification)/i;
+const FAILURE_RE = /(error|already|exists|denied|invalid|insufficient|cannot|failed)/i;
+
+export function App({
+  config,
+  autoConnect = true,
+  createService = defaultFactory,
+}: AppProps): React.ReactElement {
   const { stdout } = useStdout();
+
+  const [phase, setPhase] = useState<Phase>(() => (hasAccount(config) ? 'main' : 'choosing'));
+  const [cfg, setCfg] = useState<Config>(config);
   const [lines, setLines] = useState<LogLine[]>([]);
-  const [status, setStatus] = useState<string>('connecting');
+  const [status, setStatus] = useState<string>('idle');
   const [nick, setNick] = useState<string>(config.nick);
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const [formBusy, setFormBusy] = useState(false);
+  const [saveHint, setSaveHint] = useState(false);
+
   const idRef = useRef(0);
-  const serviceRef = useRef<IrcService | null>(null);
+  const serviceRef = useRef<ReturnType<ServiceFactory> | null>(null);
+  const intentRef = useRef<AuthIntent>('guest');
+  const registerRef = useRef<{ password: string; email: string } | null>(null);
 
-  useInput((input, key) => {
-    if (input === 'q' || (key.ctrl && input === 'c')) exit();
-  });
+  const push = useCallback((text: string, opts: { color?: string; dim?: boolean } = {}) => {
+    setLines((prev) => {
+      const next = [...prev, { id: idRef.current++, text, ...opts }];
+      return next.length > 1000 ? next.slice(next.length - 1000) : next;
+    });
+  }, []);
 
-  useEffect(() => {
-    const push = (text: string, opts: { color?: string; dim?: boolean } = {}) => {
-      setLines((prev) => {
-        const next = [...prev, { id: idRef.current++, text, ...opts }];
-        return next.length > 1000 ? next.slice(next.length - 1000) : next;
-      });
-    };
-
-    const onEvent = (event: IrcEvent) => {
+  const onEvent = useCallback(
+    (event: IrcEvent) => {
       switch (event.type) {
         case 'raw':
           push(event.line, { dim: true });
@@ -50,22 +65,44 @@ export function App({ config, autoConnect = true }: AppProps): React.ReactElemen
         case 'status':
           setStatus(event.detail ? `${event.status} — ${event.detail}` : event.status);
           push(`* ${event.status}${event.detail ? ` (${event.detail})` : ''}`, { color: 'yellow' });
+          if (event.status === 'guest' && intentRef.current === 'login') {
+            push('SASL did not log you in — connected as guest. Check account/password.', { color: 'red' });
+          }
           break;
         case 'registered':
           setNick(event.nick);
-          push(`* registered as ${event.nick}${event.account ? ` [${event.account}]` : ' [guest]'}`, {
-            color: 'green',
-          });
+          if (event.account) {
+            push(`✓ Logged in as ${event.account} (registered)`, { color: 'green' });
+            setSaveHint(true);
+          } else {
+            push(`Connected as guest: ${event.nick} (unregistered)`, { color: 'yellow' });
+          }
+          // Kick off NickServ registration once we're on the server.
+          if (intentRef.current === 'register' && registerRef.current) {
+            const { password, email } = registerRef.current;
+            push('Sending registration to NickServ…', { color: 'cyan' });
+            serviceRef.current?.register(password, email);
+          }
+          break;
+        case 'notice':
+          push(`-${event.from ?? 'server'}- ${event.text}`, { color: 'cyan' });
+          if (intentRef.current === 'register' && /nickserv/i.test(event.from ?? '')) {
+            handleRegisterNotice(event.text);
+          }
           break;
         case 'motd':
           for (const l of event.text.split('\n')) push(l, { dim: true });
           break;
-        case 'notice':
-          push(`-${event.from ?? 'server'}- ${event.text}`, { color: 'cyan' });
+        case 'message': {
+          const prefix = event.isNotice ? `-${event.from}-` : `<${event.from}>`;
+          push(`${prefix} (${event.target}) ${event.text}`, event.isNotice ? { color: 'cyan' } : {});
+          // NickServ replies arrive as NOTICEs from a nick (routed here, not as
+          // type:'notice'); feed them to the registration detector.
+          if (intentRef.current === 'register' && /nickserv/i.test(event.from)) {
+            handleRegisterNotice(event.text);
+          }
           break;
-        case 'message':
-          push(`<${event.from}> ${event.text} → ${event.target}`);
-          break;
+        }
         case 'join':
           push(`→ ${event.nick} joined ${event.channel}`, { color: 'green' });
           break;
@@ -81,27 +118,136 @@ export function App({ config, autoConnect = true }: AppProps): React.ReactElemen
         default:
           break;
       }
-    };
+    },
+    [push],
+  );
 
+  const handleRegisterNotice = useCallback(
+    (text: string) => {
+      if (SUCCESS_RE.test(text) && !FAILURE_RE.test(text)) {
+        const account = serviceRef.current?.getNick() ?? cfg.nick;
+        const password = registerRef.current?.password ?? cfg.password;
+        setCfg((c) => ({ ...c, account, password }));
+        setSaveHint(true);
+        intentRef.current = 'login'; // we are now effectively authenticated
+        registerRef.current = null;
+        push(`✓ Account "${account}" registered. Press Ctrl-S to save it for SASL next launch.`, {
+          color: 'green',
+        });
+      } else if (FAILURE_RE.test(text)) {
+        push('Registration failed (see NickServ message above). Still connected as guest.', {
+          color: 'red',
+        });
+        registerRef.current = null;
+      }
+    },
+    [cfg.nick, cfg.password, push],
+  );
+
+  const startConnection = useCallback(
+    (next: Config, intent: AuthIntent) => {
+      intentRef.current = intent;
+      setCfg(next);
+      setPhase('main');
+      setFormBusy(false);
+      setFormError(undefined);
+      // Tear down any prior service.
+      try {
+        serviceRef.current?.disconnect('reconnecting');
+      } catch {
+        /* ignore */
+      }
+      const service = createService(next, onEvent);
+      serviceRef.current = service;
+      service.connect();
+    },
+    [onEvent, createService],
+  );
+
+  // Initial auto-connect when an account is already configured.
+  useEffect(() => {
     if (!autoConnect) return;
-
-    const service = new IrcService(config, onEvent);
-    serviceRef.current = service;
-    service.connect();
-
+    if (hasAccount(config)) startConnection(config, 'login');
     return () => {
       try {
-        service.disconnect('achat closing');
+        serviceRef.current?.disconnect('achat closing');
       } catch {
         /* ignore */
       }
     };
-  }, [config]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // Main-view global keys (save credentials).
+  useInput(
+    (input, key) => {
+      if (key.ctrl && input === 's') {
+        if (hasAccount(cfg)) {
+          try {
+            const path = saveConfig(cfg);
+            setSaveHint(false);
+            push(`✓ Saved config to ${path}`, { color: 'green' });
+          } catch (err) {
+            push(`!! Could not save config: ${(err as Error).message}`, { color: 'red' });
+          }
+        } else {
+          push('Nothing to save — no account credentials in this session.', { color: 'yellow' });
+        }
+      }
+    },
+    { isActive: phase === 'main' },
+  );
+
+  // ---- auth screen handlers -------------------------------------------------
+
+  const onChoose = (choice: ChooserChoice) => {
+    if (choice === 'guest') startConnection({ ...config, account: undefined, password: undefined }, 'guest');
+    else if (choice === 'login') setPhase('login');
+    else setPhase('register');
+  };
+
+  const onLogin = (account: string, password: string) => {
+    startConnection({ ...config, account, password, nick: account }, 'login');
+  };
+
+  const onRegister = (rNick: string, password: string, email: string) => {
+    registerRef.current = { password, email };
+    startConnection({ ...config, nick: rNick, account: undefined, password: undefined }, 'register');
+  };
+
+  // ---- render ---------------------------------------------------------------
+
+  if (phase === 'choosing') {
+    return <Chooser host={config.host} onChoose={onChoose} />;
+  }
+  if (phase === 'login') {
+    return (
+      <LoginForm
+        initialAccount={config.account ?? config.nick}
+        onSubmit={onLogin}
+        onCancel={() => setPhase('choosing')}
+        error={formError}
+        busy={formBusy}
+      />
+    );
+  }
+  if (phase === 'register') {
+    return (
+      <RegisterForm
+        initialNick={config.nick}
+        onSubmit={onRegister}
+        onCancel={() => setPhase('choosing')}
+        error={formError}
+        busy={formBusy}
+      />
+    );
+  }
+
+  // main view (raw log for now; replaced by the 3-pane layout in later phases)
   const rows = stdout?.rows ?? 24;
   const visible = Math.max(5, rows - 5);
   const shown = lines.slice(Math.max(0, lines.length - visible));
-  const mode = hasAccount(config) ? `SASL ${config.account}` : 'guest';
+  const authLabel = hasAccount(cfg) ? `registered:${cfg.account}` : 'guest';
 
   return (
     <Box flexDirection="column" height={rows}>
@@ -110,7 +256,7 @@ export function App({ config, autoConnect = true }: AppProps): React.ReactElemen
           achat{' '}
         </Text>
         <Text dimColor>
-          {config.host}:{config.port} · {nick} · {mode} · {status}
+          {cfg.host}:{cfg.port} · {nick} · {authLabel} · {status}
         </Text>
       </Box>
       <Box flexDirection="column" flexGrow={1} paddingX={1}>
@@ -121,7 +267,9 @@ export function App({ config, autoConnect = true }: AppProps): React.ReactElemen
         ))}
       </Box>
       <Box flexShrink={0} paddingX={1}>
-        <Text dimColor>Phase 1: raw event log · q or Ctrl-C to quit</Text>
+        <Text dimColor>
+          Phase 2 · {saveHint ? 'Ctrl-S save credentials · ' : ''}Ctrl-C quit
+        </Text>
       </Box>
     </Box>
   );

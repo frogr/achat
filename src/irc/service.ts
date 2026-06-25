@@ -1,7 +1,7 @@
 import { Client } from 'irc-framework';
 import type {
+  ClientService,
   Config,
-  IrcCommands,
   IrcEvent,
   IrcEventHandler,
   User,
@@ -30,7 +30,7 @@ function modesToPrefix(modes: string[] | undefined): string {
  * per-channel membership (so QUIT/NICK can be fanned out to the right buffers),
  * and emits a single typed IrcEvent stream to its subscriber.
  */
-export class IrcService implements IrcCommands {
+export class IrcService implements ClientService {
   private client: Client;
   private handler: IrcEventHandler;
   private cfg: Config;
@@ -116,6 +116,19 @@ export class IrcService implements IrcCommands {
 
   raw(line: string): void {
     this.client.rawString(line);
+  }
+
+  /** Register the current nick as a NickServ account (Ergo). The result arrives
+   * as a NickServ NOTICE, surfaced through the normal notice event stream. */
+  register(password: string, email?: string): void {
+    const args = email && email.trim().length > 0 ? `${password} ${email}` : password;
+    this.client.say('NickServ', `REGISTER ${args}`);
+  }
+
+  /** Identify to NickServ for the current session (used after registration when
+   * the server doesn't auto-login, or for a manual /identify). */
+  identify(account: string, password: string): void {
+    this.client.say('NickServ', `IDENTIFY ${account} ${password}`);
   }
 
   // ---- membership helpers ---------------------------------------------------
