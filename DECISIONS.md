@@ -87,6 +87,21 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   lives in the reducer/container. Verified with a render test + an ASCII frame dump
   (`scripts/demo-layout.mjs`) that matches the brief's mockup.
 
+## Phase 4 — Wire real data in
+
+- **`App` now drives the reducer:** the IRC event handler does `dispatch({type:'irc',event})`
+  for display, then runs side-effects (auto-join configured channels on `registered`, NickServ
+  register detection, SASL-fail surfacing, Ctrl-S save). · One event stream, two concerns
+  cleanly separated.
+- **Auto-join on every `registered`** (not just first) so reconnects rejoin channels (Phase 8
+  resilience comes for free). Channels come from config.
+- **Basic sending wired now** (non-slash text → `say(activeBuffer)`); slash commands deferred to
+  Phase 6 with a friendly placeholder. · Lets us verify two-way flow early.
+- **Verified end-to-end against irc.austn.net** with `scripts/live-app.mjs`: real App connects
+  as guest, auto-joins #general, a second client joins and speaks, and the frame shows the
+  incoming message (nick-colored), the join lines, and a 2-user list. Plus a deterministic
+  wiring unit test via the fake service.
+
 ### Deferred / revisit
 
 - SASL EXTERNAL (CertFP) — stretch; default to SASL PLAIN over TLS first.

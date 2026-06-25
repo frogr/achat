@@ -64,6 +64,35 @@ test('guest flow: choosing guest connects without an account', async () => {
   unmount();
 });
 
+test('wiring: live events render channel, messages, and users', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = render(
+    <App config={base} autoConnect={false} createService={fake.factory} />,
+  );
+  await tick();
+  stdin.write('3'); // guest
+  await tick();
+  fake.emit({ type: 'registered', nick: 'austin' });
+  await tick();
+  fake.emit({ type: 'join', channel: '#general', nick: 'austin', isSelf: true });
+  fake.emit({
+    type: 'names',
+    channel: '#general',
+    users: [
+      { nick: 'austin', prefix: '@' },
+      { nick: 'bob', prefix: '' },
+    ],
+  });
+  fake.emit({ type: 'message', target: '#general', from: 'bob', text: 'hey there austin', isAction: false, isNotice: false });
+  await tick();
+  const frame = lastFrame() ?? '';
+  assert.match(frame, /#general/);
+  assert.match(frame, /Users \[3\]/);
+  assert.match(frame, /bob/);
+  assert.match(frame, /hey there austin/);
+  unmount();
+});
+
 test('register flow: submits form, calls NickServ, detects success', async () => {
   const fake = makeFake();
   const { stdin, lastFrame, unmount } = render(

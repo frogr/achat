@@ -1,8 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Box, Text, useInput, useStdout } from 'ink';
+import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useInput } from 'ink';
 import type { Config, IrcEvent, ServiceFactory } from '../types.js';
 import { hasAccount, saveConfig } from '../config.js';
 import { IrcService } from '../irc/service.js';
+import {
+  reducer,
+  initialState,
+  activeBuffer,
+  SERVER_BUFFER,
+  type Action,
+} from '../state/appState.js';
+import { ClientView } from './ClientView.js';
 import { Chooser, LoginForm, RegisterForm, type ChooserChoice } from './auth/AuthScreens.js';
 
 export interface AppProps {
@@ -15,13 +23,6 @@ export interface AppProps {
 
 const defaultFactory: ServiceFactory = (cfg, handler) => new IrcService(cfg, handler);
 
-interface LogLine {
-  id: number;
-  text: string;
-  color?: string;
-  dim?: boolean;
-}
-
 type Phase = 'choosing' | 'login' | 'register' | 'main';
 type AuthIntent = 'guest' | 'login' | 'register';
 
@@ -33,125 +34,107 @@ export function App({
   autoConnect = true,
   createService = defaultFactory,
 }: AppProps): React.ReactElement {
-  const { stdout } = useStdout();
-
   const [phase, setPhase] = useState<Phase>(() => (hasAccount(config) ? 'main' : 'choosing'));
-  const [cfg, setCfg] = useState<Config>(config);
-  const [lines, setLines] = useState<LogLine[]>([]);
-  const [status, setStatus] = useState<string>('idle');
-  const [nick, setNick] = useState<string>(config.nick);
+  const [state, dispatch] = useReducer(
+    reducer,
+    undefined,
+    () =>
+      initialState({ nick: config.nick, account: config.account, host: config.host, port: config.port }),
+  );
+  const [inputValue, setInputValue] = useState('');
   const [formError, setFormError] = useState<string | undefined>(undefined);
-  const [formBusy, setFormBusy] = useState(false);
+  const [formBusy] = useState(false);
   const [saveHint, setSaveHint] = useState(false);
 
-  const idRef = useRef(0);
   const serviceRef = useRef<ReturnType<ServiceFactory> | null>(null);
   const intentRef = useRef<AuthIntent>('guest');
   const registerRef = useRef<{ password: string; email: string } | null>(null);
+  const cfgRef = useRef<Config>(config);
+  const credsRef = useRef<{ account?: string; password?: string }>({
+    account: config.account,
+    password: config.password,
+  });
 
-  const push = useCallback((text: string, opts: { color?: string; dim?: boolean } = {}) => {
-    setLines((prev) => {
-      const next = [...prev, { id: idRef.current++, text, ...opts }];
-      return next.length > 1000 ? next.slice(next.length - 1000) : next;
-    });
-  }, []);
+  const d = useCallback((a: Action) => dispatch(a), []);
+
+  const handleRegisterNotice = useCallback(
+    (text: string) => {
+      if (SUCCESS_RE.test(text) && !FAILURE_RE.test(text)) {
+        const account = serviceRef.current?.getNick() ?? cfgRef.current.nick;
+        const password = registerRef.current?.password;
+        credsRef.current = { account, password };
+        setSaveHint(true);
+        intentRef.current = 'login';
+        registerRef.current = null;
+        d({
+          target: SERVER_BUFFER,
+          type: 'localLine',
+          kind: 'system',
+          text: `✓ Account "${account}" registered. Press Ctrl-S to save it for SASL next launch.`,
+        });
+      } else if (FAILURE_RE.test(text)) {
+        d({
+          target: SERVER_BUFFER,
+          type: 'localLine',
+          kind: 'error',
+          text: 'Registration failed (see NickServ message above). Still connected as guest.',
+        });
+        registerRef.current = null;
+      }
+    },
+    [d],
+  );
 
   const onEvent = useCallback(
     (event: IrcEvent) => {
+      // 1) fold into UI state
+      d({ type: 'irc', event });
+
+      // 2) side-effects (auth + auto-join)
       switch (event.type) {
-        case 'raw':
-          push(event.line, { dim: true });
-          break;
-        case 'status':
-          setStatus(event.detail ? `${event.status} — ${event.detail}` : event.status);
-          push(`* ${event.status}${event.detail ? ` (${event.detail})` : ''}`, { color: 'yellow' });
-          if (event.status === 'guest' && intentRef.current === 'login') {
-            push('SASL did not log you in — connected as guest. Check account/password.', { color: 'red' });
-          }
-          break;
-        case 'registered':
-          setNick(event.nick);
+        case 'registered': {
           if (event.account) {
-            push(`✓ Logged in as ${event.account} (registered)`, { color: 'green' });
+            credsRef.current = { account: event.account, password: cfgRef.current.password };
             setSaveHint(true);
-          } else {
-            push(`Connected as guest: ${event.nick} (unregistered)`, { color: 'yellow' });
           }
-          // Kick off NickServ registration once we're on the server.
+          // auto-join configured channels (also covers rejoin on reconnect)
+          for (const ch of cfgRef.current.channels) serviceRef.current?.join(ch);
+          // kick off NickServ registration if that was the intent
           if (intentRef.current === 'register' && registerRef.current) {
             const { password, email } = registerRef.current;
-            push('Sending registration to NickServ…', { color: 'cyan' });
             serviceRef.current?.register(password, email);
           }
           break;
-        case 'notice':
-          push(`-${event.from ?? 'server'}- ${event.text}`, { color: 'cyan' });
-          if (intentRef.current === 'register' && /nickserv/i.test(event.from ?? '')) {
-            handleRegisterNotice(event.text);
+        }
+        case 'status':
+          if (event.status === 'guest' && intentRef.current === 'login') {
+            d({
+              target: SERVER_BUFFER,
+              type: 'localLine',
+              kind: 'error',
+              text: 'SASL did not log you in — connected as guest. Check account/password.',
+            });
           }
           break;
-        case 'motd':
-          for (const l of event.text.split('\n')) push(l, { dim: true });
-          break;
-        case 'message': {
-          const prefix = event.isNotice ? `-${event.from}-` : `<${event.from}>`;
-          push(`${prefix} (${event.target}) ${event.text}`, event.isNotice ? { color: 'cyan' } : {});
-          // NickServ replies arrive as NOTICEs from a nick (routed here, not as
-          // type:'notice'); feed them to the registration detector.
+        case 'message':
           if (intentRef.current === 'register' && /nickserv/i.test(event.from)) {
             handleRegisterNotice(event.text);
           }
-          break;
-        }
-        case 'join':
-          push(`→ ${event.nick} joined ${event.channel}`, { color: 'green' });
-          break;
-        case 'part':
-          push(`← ${event.nick} left ${event.channel}`, { color: 'magenta' });
-          break;
-        case 'quit':
-          push(`← ${event.nick} quit (${event.reason ?? ''})`, { color: 'magenta' });
-          break;
-        case 'error':
-          push(`!! ${event.text}`, { color: 'red' });
           break;
         default:
           break;
       }
     },
-    [push],
-  );
-
-  const handleRegisterNotice = useCallback(
-    (text: string) => {
-      if (SUCCESS_RE.test(text) && !FAILURE_RE.test(text)) {
-        const account = serviceRef.current?.getNick() ?? cfg.nick;
-        const password = registerRef.current?.password ?? cfg.password;
-        setCfg((c) => ({ ...c, account, password }));
-        setSaveHint(true);
-        intentRef.current = 'login'; // we are now effectively authenticated
-        registerRef.current = null;
-        push(`✓ Account "${account}" registered. Press Ctrl-S to save it for SASL next launch.`, {
-          color: 'green',
-        });
-      } else if (FAILURE_RE.test(text)) {
-        push('Registration failed (see NickServ message above). Still connected as guest.', {
-          color: 'red',
-        });
-        registerRef.current = null;
-      }
-    },
-    [cfg.nick, cfg.password, push],
+    [d, handleRegisterNotice],
   );
 
   const startConnection = useCallback(
     (next: Config, intent: AuthIntent) => {
       intentRef.current = intent;
-      setCfg(next);
+      cfgRef.current = next;
+      credsRef.current = { account: next.account, password: next.password };
       setPhase('main');
-      setFormBusy(false);
       setFormError(undefined);
-      // Tear down any prior service.
       try {
         serviceRef.current?.disconnect('reconnecting');
       } catch {
@@ -164,7 +147,6 @@ export function App({
     [onEvent, createService],
   );
 
-  // Initial auto-connect when an account is already configured.
   useEffect(() => {
     if (!autoConnect) return;
     if (hasAccount(config)) startConnection(config, 'login');
@@ -178,20 +160,44 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Main-view global keys (save credentials).
+  // ---- input handling -------------------------------------------------------
+
+  const onInputSubmit = useCallback(
+    (raw: string) => {
+      const text = raw.trim();
+      setInputValue('');
+      if (!text) return;
+      const buf = activeBuffer(state);
+      if (text.startsWith('/')) {
+        // full slash-command support arrives in Phase 6
+        d({ target: buf.name, type: 'localLine', kind: 'error', text: `Commands arrive in Phase 6: ${text}` });
+        return;
+      }
+      if (buf.type === 'server') {
+        d({ target: SERVER_BUFFER, type: 'localLine', kind: 'error', text: 'Join a channel first (no active conversation).' });
+        return;
+      }
+      serviceRef.current?.say(buf.name, text);
+    },
+    [state, d],
+  );
+
+  // ---- main-view global keys ------------------------------------------------
+
   useInput(
     (input, key) => {
       if (key.ctrl && input === 's') {
-        if (hasAccount(cfg)) {
+        const creds = credsRef.current;
+        if (creds.account && creds.password) {
           try {
-            const path = saveConfig(cfg);
+            const path = saveConfig({ ...cfgRef.current, ...creds });
             setSaveHint(false);
-            push(`✓ Saved config to ${path}`, { color: 'green' });
+            d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: `✓ Saved config to ${path}` });
           } catch (err) {
-            push(`!! Could not save config: ${(err as Error).message}`, { color: 'red' });
+            d({ target: SERVER_BUFFER, type: 'localLine', kind: 'error', text: `Could not save: ${(err as Error).message}` });
           }
         } else {
-          push('Nothing to save — no account credentials in this session.', { color: 'yellow' });
+          d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: 'Nothing to save — no credentials this session.' });
         }
       }
     },
@@ -217,10 +223,8 @@ export function App({
 
   // ---- render ---------------------------------------------------------------
 
-  if (phase === 'choosing') {
-    return <Chooser host={config.host} onChoose={onChoose} />;
-  }
-  if (phase === 'login') {
+  if (phase === 'choosing') return <Chooser host={config.host} onChoose={onChoose} />;
+  if (phase === 'login')
     return (
       <LoginForm
         initialAccount={config.account ?? config.nick}
@@ -230,8 +234,7 @@ export function App({
         busy={formBusy}
       />
     );
-  }
-  if (phase === 'register') {
+  if (phase === 'register')
     return (
       <RegisterForm
         initialNick={config.nick}
@@ -241,36 +244,18 @@ export function App({
         busy={formBusy}
       />
     );
-  }
 
-  // main view (raw log for now; replaced by the 3-pane layout in later phases)
-  const rows = stdout?.rows ?? 24;
-  const visible = Math.max(5, rows - 5);
-  const shown = lines.slice(Math.max(0, lines.length - visible));
-  const authLabel = hasAccount(cfg) ? `registered:${cfg.account}` : 'guest';
+  const hint = saveHint
+    ? 'Ctrl-S save credentials · Tab/1-2-3 focus · Enter send · PgUp/PgDn scroll · Ctrl-C quit'
+    : undefined;
 
   return (
-    <Box flexDirection="column" height={rows}>
-      <Box borderStyle="round" borderColor="green" paddingX={1} flexShrink={0}>
-        <Text color="green" bold>
-          achat{' '}
-        </Text>
-        <Text dimColor>
-          {cfg.host}:{cfg.port} · {nick} · {authLabel} · {status}
-        </Text>
-      </Box>
-      <Box flexDirection="column" flexGrow={1} paddingX={1}>
-        {shown.map((l) => (
-          <Text key={l.id} color={l.color} dimColor={l.dim} wrap="truncate-end">
-            {l.text}
-          </Text>
-        ))}
-      </Box>
-      <Box flexShrink={0} paddingX={1}>
-        <Text dimColor>
-          Phase 2 · {saveHint ? 'Ctrl-S save credentials · ' : ''}Ctrl-C quit
-        </Text>
-      </Box>
-    </Box>
+    <ClientView
+      state={state}
+      inputValue={inputValue}
+      onInputChange={setInputValue}
+      onInputSubmit={onInputSubmit}
+      hint={hint}
+    />
   );
 }
