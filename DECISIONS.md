@@ -132,7 +132,22 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   receive all work; plus unit tests for /join, /me, /nick, unknown-command, plain-text, and the
   `//` escape (31 tests).
 
-### Server quirk discovered (irc.austn.net / Ergo)
+## Phase 7 — Polish
+
+- **Command palette (Ctrl-K)** is a centered modal (Ink has no true overlay/z-index, so it
+  replaces the client view while open) with a fuzzy filter (`lib/fuzzy.ts`, subsequence +
+  consecutive/word-start bonuses). Items = "Go to <buffer>" for every buffer + every command;
+  arg-less commands run immediately, commands needing args prefill the input. Has its own
+  `useInput`; the main key handler is disabled while it's open.
+- **Most polish landed earlier and is confirmed:** deterministic nick colors (hashed palette,
+  own nick green+bold + "(you)"); unread badges (count, yellow) and mention badges (`@`, red)
+  in the Channels panel, cleared on activate; system/event lines styled by kind (`»` joins
+  green, parts/quits magenta, topic/mode blue, notices cyan, errors red, motd dim); rows are
+  single-line truncating so labels never get eaten by hints.
+- Verified: fuzzy unit tests, a palette keystroke test (Ctrl-K → filter → Enter switches
+  buffer), and frame dumps (`scripts/demo-palette.mjs`, `scripts/demo-badges.mjs`).
+
+## Server quirk discovered (irc.austn.net / Ergo)
 
 - **The server force-auto-joins every client to `#general`** ("You are auto-joined to #general")
   and **replays chathistory** as a batch on join. · This is benign for achat (we render the

@@ -10,7 +10,8 @@ import {
   SERVER_BUFFER,
   type Action,
 } from '../state/appState.js';
-import { runCommand, type CommandActions } from '../lib/commands.js';
+import { runCommand, COMMANDS, type CommandActions } from '../lib/commands.js';
+import { CommandPalette, type PaletteItem } from './CommandPalette.js';
 import { ClientView } from './ClientView.js';
 import { Chooser, LoginForm, RegisterForm, type ChooserChoice } from './auth/AuthScreens.js';
 
@@ -48,6 +49,7 @@ export function App({
   const [formError, setFormError] = useState<string | undefined>(undefined);
   const [formBusy] = useState(false);
   const [saveHint, setSaveHint] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const serviceRef = useRef<ReturnType<ServiceFactory> | null>(null);
   const intentRef = useRef<AuthIntent>('guest');
@@ -259,6 +261,7 @@ export function App({
   useInput(
     (input, key) => {
       // global keys, any focus
+      if (key.ctrl && input === 'k') return setPaletteOpen(true);
       if (key.ctrl && input === 's') return saveCreds();
       if (key.tab) return d({ type: 'cycleFocus', dir: key.shift ? -1 : 1 });
       if (key.escape) {
@@ -307,8 +310,38 @@ export function App({
         setCursor(cursor + input.length);
       }
     },
-    { isActive: phase === 'main' },
+    { isActive: phase === 'main' && !paletteOpen },
   );
+
+  const paletteItems: PaletteItem[] = useMemo(() => {
+    const items: PaletteItem[] = [];
+    for (const b of state.buffers) {
+      const name = b.name === SERVER_BUFFER ? '*server*' : b.name;
+      items.push({
+        id: `go:${b.name}`,
+        label: `Go to ${name}`,
+        hint: b.type,
+        run: () => d({ type: 'setActive', name: b.name }),
+      });
+    }
+    for (const c of COMMANDS) {
+      items.push({
+        id: `cmd:${c.name}`,
+        label: `/${c.name}`,
+        hint: c.help,
+        run: () => {
+          if (c.usage.includes('<')) {
+            setInputValue(`/${c.name} `);
+            setCursor(c.name.length + 2);
+            d({ type: 'setFocus', focus: 'messages' });
+          } else {
+            submit(`/${c.name}`);
+          }
+        },
+      });
+    }
+    return items;
+  }, [state.buffers, d, submit]);
 
   // ---- auth screen handlers -------------------------------------------------
 
@@ -351,8 +384,12 @@ export function App({
       />
     );
 
+  if (paletteOpen) {
+    return <CommandPalette items={paletteItems} onClose={() => setPaletteOpen(false)} />;
+  }
+
   const hint = saveHint
-    ? 'Ctrl-S save credentials · Tab/1-2-3 focus · Enter send · PgUp/PgDn scroll · Ctrl-C quit'
+    ? 'Ctrl-S save credentials · Tab/1-3 focus · Enter send · PgUp/PgDn scroll · Ctrl-K palette · Ctrl-C quit'
     : undefined;
 
   return <ClientView state={state} inputValue={inputValue} inputCursor={cursor} hint={hint} />;

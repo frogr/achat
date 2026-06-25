@@ -1,0 +1,15 @@
+import React from 'react';
+import { render } from 'ink-testing-library';
+import { ClientView } from '../dist/ui/ClientView.js';
+import { initialState, applyEvent, reducer } from '../dist/state/appState.js';
+let s = initialState({ nick: 'austin', host: 'h', port: 1 });
+s = applyEvent(s, { type:'join', channel:'#general', nick:'austin', isSelf:true });
+s = applyEvent(s, { type:'join', channel:'#dev', nick:'austin', isSelf:true });
+s = applyEvent(s, { type:'join', channel:'#noise', nick:'austin', isSelf:true });
+s = reducer(s, { type:'setActive', name:'#general' });
+s = applyEvent(s, { type:'message', target:'#noise', from:'x', text:'hi all', isAction:false, isNotice:false });
+s = applyEvent(s, { type:'message', target:'#noise', from:'y', text:'yo', isAction:false, isNotice:false });
+s = applyEvent(s, { type:'message', target:'#dev', from:'z', text:'hey austin look', isAction:false, isNotice:false });
+const { lastFrame } = render(React.createElement(ClientView, { state:s, inputValue:'', inputCursor:0 }));
+console.log(lastFrame().split('\n').slice(1,8).join('\n'));
+process.exit(0);

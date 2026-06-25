@@ -260,6 +260,24 @@ test('plain text sends to the active channel; // escapes a slash', async () => {
   unmount();
 });
 
+test('command palette: Ctrl-K, filter, Enter switches buffer', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = await bootGuest(fake);
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  fake.emit({ type: 'join', channel: '#zzz', nick: 'austin', isSelf: true });
+  await tick();
+  assert.match(lastFrame() ?? '', /#zzz \[2\]/); // active is the latest join
+  stdin.write(String.fromCharCode(11)); // Ctrl-K opens palette
+  await tick();
+  assert.match(lastFrame() ?? '', /palette/);
+  stdin.write('aaa'); // fuzzy filter
+  await tick();
+  stdin.write('\r'); // run -> "Go to #aaa"
+  await tick();
+  assert.match(lastFrame() ?? '', /#aaa \[2\]/);
+  unmount();
+});
+
 test('register flow: submits form, calls NickServ, detects success', async () => {
   const fake = makeFake();
   const { stdin, lastFrame, unmount } = render(
