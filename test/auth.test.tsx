@@ -18,7 +18,17 @@ const base: Config = {
 const tick = () => new Promise((r) => setTimeout(r, 15));
 
 function makeFake() {
-  const calls = { connect: 0, disconnect: 0, register: [] as Array<[string, string | undefined]> };
+  const calls = {
+    connect: 0,
+    disconnect: 0,
+    register: [] as Array<[string, string | undefined]>,
+    join: [] as string[],
+    part: [] as string[],
+    say: [] as Array<[string, string]>,
+    action: [] as Array<[string, string]>,
+    changeNick: [] as string[],
+    whois: [] as string[],
+  };
   let handler: ((e: IrcEvent) => void) | null = null;
   let nick = '';
   const factory: ServiceFactory = (cfg, h) => {
@@ -31,13 +41,26 @@ function makeFake() {
       disconnect() {
         calls.disconnect++;
       },
-      join() {},
-      part() {},
-      say() {},
-      action() {},
+      join(ch: string) {
+        calls.join.push(ch);
+      },
+      part(ch: string) {
+        calls.part.push(ch);
+      },
+      say(t: string, m: string) {
+        calls.say.push([t, m]);
+      },
+      action(t: string, m: string) {
+        calls.action.push([t, m]);
+      },
       notice() {},
-      changeNick() {},
-      whois() {},
+      changeNick(n: string) {
+        calls.changeNick.push(n);
+        nick = n;
+      },
+      whois(n: string) {
+        calls.whois.push(n);
+      },
       raw() {},
       getNick: () => nick,
       register(pw: string, email?: string) {
@@ -47,6 +70,20 @@ function makeFake() {
     };
   };
   return { factory, calls, emit: (e: IrcEvent) => handler?.(e) };
+}
+
+async function bootGuest(fake: ReturnType<typeof makeFake>) {
+  const r = render(<App config={base} autoConnect={false} createService={fake.factory} />);
+  await tick();
+  r.stdin.write('3');
+  await tick();
+  fake.emit({ type: 'registered', nick: 'austin' });
+  await tick();
+  return r;
+}
+
+function type(stdin: { write: (s: string) => void }, s: string) {
+  stdin.write(s);
 }
 
 test('guest flow: choosing guest connects without an account', async () => {
@@ -163,6 +200,63 @@ test('navigation: Users panel Enter opens a query buffer', async () => {
   stdin.write('\r'); // open query
   await tick();
   assert.match(lastFrame() ?? '', /zelda \[2\]/);
+  unmount();
+});
+
+test('command /join joins and activates a channel', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = await bootGuest(fake);
+  type(stdin, '/join #cats');
+  await tick();
+  stdin.write('\r');
+  await tick();
+  assert.deepEqual(fake.calls.join, ['#cats']);
+  assert.match(lastFrame() ?? '', /#cats \[2\]/);
+  unmount();
+});
+
+test('command /me sends an action; /nick changes nick; unknown errors', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = await bootGuest(fake);
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  await tick();
+  type(stdin, '/me waves hello');
+  await tick();
+  stdin.write('\r');
+  await tick();
+  assert.deepEqual(fake.calls.action, [['#aaa', 'waves hello']]);
+
+  type(stdin, '/nick bob');
+  await tick();
+  stdin.write('\r');
+  await tick();
+  assert.deepEqual(fake.calls.changeNick, ['bob']);
+
+  type(stdin, '/bogus');
+  await tick();
+  stdin.write('\r');
+  await tick();
+  assert.match(lastFrame() ?? '', /Unknown command/);
+  unmount();
+});
+
+test('plain text sends to the active channel; // escapes a slash', async () => {
+  const fake = makeFake();
+  const { stdin, unmount } = await bootGuest(fake);
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  await tick();
+  type(stdin, 'hello world');
+  await tick();
+  stdin.write('\r');
+  await tick();
+  type(stdin, '//slashed');
+  await tick();
+  stdin.write('\r');
+  await tick();
+  assert.deepEqual(fake.calls.say, [
+    ['#aaa', 'hello world'],
+    ['#aaa', '/slashed'],
+  ]);
   unmount();
 });
 

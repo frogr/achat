@@ -117,6 +117,30 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   **PgUp/PgDn** page the scrollback. Verified via unit tests driving real keystrokes through
   ink-testing-library (channel switch, users→query, typing-then-digit stays literal).
 
+## Phase 6 — Sending, slash commands, scrollback
+
+- **Command registry in `lib/commands.ts`** (data-driven `CommandSpec[]`) drives `/help` and
+  the Phase-7 palette from one source. Supported: join, part, msg, query, nick, me, whois,
+  register, identify, topic, close, save, timestamps, connect, quit, help (+ aliases). Unknown
+  → friendly error; `//` escapes a literal leading slash; plain text → active buffer.
+- **App-level actions** (quit/save/register/connect/setTimestamps) are passed to commands via a
+  `CommandActions` context, keeping `commands.ts` free of React/refs.
+- **Scrollback:** PgUp/PgDn page; ↑↓ line-scroll while the input is focused; **Esc returns to
+  live** (and refocuses input); sending a line also jumps to latest. New lines while scrolled
+  up preserve the offset (you don't get yanked to the bottom).
+- **Verified with a real two-way conversation** (`scripts/live-convo.mjs`): `/join`, send, and
+  receive all work; plus unit tests for /join, /me, /nick, unknown-command, plain-text, and the
+  `//` escape (31 tests).
+
+### Server quirk discovered (irc.austn.net / Ergo)
+
+- **The server force-auto-joins every client to `#general`** ("You are auto-joined to #general")
+  and **replays chathistory** as a batch on join. · This is benign for achat (we render the
+  history; our own auto-join of #general is idempotent), but it tripped up the test *bots*: a
+  `join`/isSelf handler fires for both the auto-joined #general and the real channel. Diagnosed
+  a phantom "duplicate message" to this (the bot double-sent), confirmed achat itself never
+  duplicates. Lesson baked into the verify scripts (guard on channel name).
+
 ### Deferred / revisit
 
 - SASL EXTERNAL (CertFP) — stretch; default to SASL PLAIN over TLS first.

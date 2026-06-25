@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import { useInput } from 'ink';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useApp, useInput } from 'ink';
 import type { Config, IrcEvent, ServiceFactory } from '../types.js';
 import { hasAccount, saveConfig } from '../config.js';
 import { IrcService } from '../irc/service.js';
@@ -10,6 +10,7 @@ import {
   SERVER_BUFFER,
   type Action,
 } from '../state/appState.js';
+import { runCommand, type CommandActions } from '../lib/commands.js';
 import { ClientView } from './ClientView.js';
 import { Chooser, LoginForm, RegisterForm, type ChooserChoice } from './auth/AuthScreens.js';
 
@@ -34,6 +35,7 @@ export function App({
   autoConnect = true,
   createService = defaultFactory,
 }: AppProps): React.ReactElement {
+  const { exit } = useApp();
   const [phase, setPhase] = useState<Phase>(() => (hasAccount(config) ? 'main' : 'choosing'));
   const [state, dispatch] = useReducer(
     reducer,
@@ -168,26 +170,6 @@ export function App({
     setCursor(0);
   }, []);
 
-  const submit = useCallback(
-    (raw: string) => {
-      const text = raw.trim();
-      clearInput();
-      if (!text) return;
-      const buf = activeBuffer(state);
-      if (text.startsWith('/')) {
-        // full slash-command support arrives in Phase 6
-        d({ target: buf.name, type: 'localLine', kind: 'error', text: `Commands arrive in Phase 6: ${text}` });
-        return;
-      }
-      if (buf.type === 'server') {
-        d({ target: SERVER_BUFFER, type: 'localLine', kind: 'error', text: 'Join a channel first (no active conversation).' });
-        return;
-      }
-      serviceRef.current?.say(buf.name, text);
-    },
-    [state, d, clearInput],
-  );
-
   const saveCreds = useCallback(() => {
     const creds = credsRef.current;
     if (creds.account && creds.password) {
@@ -202,6 +184,65 @@ export function App({
       d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: 'Nothing to save — no credentials this session.' });
     }
   }, [d]);
+
+  const reconnect = useCallback(() => {
+    d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: 'Reconnecting…' });
+    serviceRef.current?.connect();
+  }, [d]);
+
+  const actions: CommandActions = useMemo(
+    () => ({
+      quit: (msg) => {
+        try {
+          serviceRef.current?.disconnect(msg ?? 'achat');
+        } catch {
+          /* ignore */
+        }
+        exit();
+      },
+      save: saveCreds,
+      register: (password, email = '') => {
+        intentRef.current = 'register';
+        registerRef.current = { password, email };
+        serviceRef.current?.register(password, email || undefined);
+      },
+      connect: reconnect,
+      setTimestamps: (v) => d({ type: 'setShowTimestamps', value: v }),
+    }),
+    [exit, saveCreds, reconnect, d],
+  );
+
+  const sendPlain = useCallback(
+    (text: string) => {
+      const buf = activeBuffer(state);
+      if (buf.type === 'server') {
+        d({ target: SERVER_BUFFER, type: 'localLine', kind: 'error', text: 'Join a channel first (no active conversation).' });
+        return;
+      }
+      serviceRef.current?.say(buf.name, text);
+    },
+    [state, d],
+  );
+
+  const submit = useCallback(
+    (raw: string) => {
+      const text = raw.trim();
+      clearInput();
+      d({ type: 'scrollToLatest' });
+      if (!text) return;
+      if (text.startsWith('/')) {
+        if (!serviceRef.current) {
+          d({ target: activeBuffer(state).name, type: 'localLine', kind: 'error', text: 'Not connected.' });
+          return;
+        }
+        const res = runCommand(text, { state, service: serviceRef.current, dispatch: d, actions });
+        if (res.send !== undefined) sendPlain(res.send);
+        return;
+      }
+      sendPlain(text);
+    },
+    [state, d, clearInput, actions, sendPlain],
+  );
 
   const openQueryForSelectedUser = useCallback(() => {
     const buf = activeBuffer(state);
@@ -220,7 +261,10 @@ export function App({
       // global keys, any focus
       if (key.ctrl && input === 's') return saveCreds();
       if (key.tab) return d({ type: 'cycleFocus', dir: key.shift ? -1 : 1 });
-      if (key.escape) return d({ type: 'setFocus', focus: 'messages' });
+      if (key.escape) {
+        d({ type: 'setFocus', focus: 'messages' });
+        return d({ type: 'scrollToLatest' });
+      }
       if (key.pageUp) return d({ type: 'scroll', delta: PAGE });
       if (key.pageDown) return d({ type: 'scroll', delta: -PAGE });
 
