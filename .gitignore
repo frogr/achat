@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Local user config may contain account passwords — never commit
+config.json
+/config.local.json
+.env

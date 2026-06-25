@@ -1,0 +1,9 @@
+{
+  "host": "irc.austn.net",
+  "port": 6697,
+  "tls": true,
+  "nick": "your-nick",
+  "account": "your-registered-account",
+  "password": "your-account-password-for-SASL",
+  "channels": ["#general"]
+}

@@ -1,0 +1,50 @@
+{
+  "name": "achat",
+  "version": "0.1.0",
+  "description": "A polished terminal IRC client with a classic three-pane TUI. TypeScript + Ink.",
+  "type": "module",
+  "bin": {
+    "achat": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "config.example.json",
+    "README.md",
+    "DECISIONS.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.tsx",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx 'test/**/*.test.ts' 'test/**/*.test.tsx'",
+    "prepublishOnly": "tsc"
+  },
+  "keywords": [
+    "irc",
+    "tui",
+    "terminal",
+    "ink",
+    "chat",
+    "cli"
+  ],
+  "author": "Austin French",
+  "license": "MIT",
+  "dependencies": {
+    "ink": "^5.1.0",
+    "ink-text-input": "^6.0.0",
+    "irc-framework": "^4.14.0",
+    "meow": "^13.2.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
