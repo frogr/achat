@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import type { Buffer, Line } from '../types.js';
 import { nickColor } from '../lib/colors.js';
@@ -78,19 +78,26 @@ export function MessagesPanel({
   const innerWidth = Math.max(10, width - 4); // border(2) + paddingX(2)
   const innerHeight = Math.max(1, height - 3); // border(2) + title(1)
 
-  // expand all lines to visual rows
-  const rows: VisualRow[] = [];
-  for (const line of buffer.lines) rows.push(...buildRows(line, innerWidth, showTimestamps));
+  // expand all lines to visual rows (only when the buffer/size changes, not on
+  // every scroll/focus re-render)
+  const rows = useMemo(() => {
+    const r: VisualRow[] = [];
+    for (const line of buffer.lines) r.push(...buildRows(line, innerWidth, showTimestamps));
+    return r;
+  }, [buffer.lines, innerWidth, showTimestamps]);
 
+  // Clamp scroll to the visual-row count so the window always stays full at the
+  // top (the reducer clamps against line count, not wrapped-row count).
   const total = rows.length;
-  const end = Math.max(0, total - scroll);
+  const maxScroll = Math.max(0, total - innerHeight);
+  const effScroll = Math.min(Math.max(0, scroll), maxScroll);
+  const end = total - effScroll;
   const start = Math.max(0, end - innerHeight);
   const visible = rows.slice(start, end);
 
-  const title =
-    buffer.name === SERVER_BUFFER ? 'Server' : buffer.name;
+  const title = buffer.name === SERVER_BUFFER ? 'Server' : buffer.name;
   const topic = buffer.topic ? ` — ${buffer.topic}` : '';
-  const scrolledUp = scroll > 0;
+  const scrolledUp = effScroll > 0;
 
   return (
     <Box
@@ -106,7 +113,7 @@ export function MessagesPanel({
           {title} [2]
           <Text dimColor>{topic}</Text>
         </Text>
-        {scrolledUp ? <Text color="yellow">↑ scrolled ({scroll})</Text> : null}
+        {scrolledUp ? <Text color="yellow">↑ scrolled ({effScroll})</Text> : null}
       </Box>
       <Box flexDirection="column" flexGrow={1}>
         {visible.map((r) => (

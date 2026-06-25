@@ -162,6 +162,39 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   table, all slash commands, resilience, the #general auto-join quirk, dev/verify scripts, and the
   architecture. DECISIONS (this file) is the running rationale.
 
+## Post-build adversarial code review (multi-agent)
+
+Ran a multi-agent review (4 dimension reviewers → adversarial verification) over the source.
+26 raw findings → 16 "confirmed". Triaged each myself; applied the genuine ones and rejected
+the rest with reasons:
+
+**Fixed:**
+- Renaming the active query buffer on a NICK change now updates `state.active` (was falling back
+  to the server buffer). + test.
+- Self-message to a not-yet-open target now creates the query/channel buffer instead of dumping
+  the line into the server buffer (`/msg newnick …` sends `say` before `openBuffer`). + test.
+- Messages panel now clamps scroll against the wrapped-row count so the window stays full at the
+  top of scrollback (the reducer clamps against line count, which over-scrolls after wrapping).
+- `MessagesPanel` row expansion is memoized on `[lines, width, timestamps]` (was rebuilding all
+  rows on every scroll/focus render).
+- Real-time MODE → user prefix: the service now tracks a full mode *set* per member and updates
+  `@/+/%` live on `+o`/`-o`/`+v`/… (previously only refreshed on the next NAMES/rejoin). `-mode`
+  correctly falls back to a remaining lower prefix.
+- `IrcService.dispose()` (quit + `removeAllListeners`) is called before replacing the service on
+  login/register/reconnect and on unmount, so an abandoned service can't emit into a stale handler.
+
+**Rejected (false positives — verified against the code/libs):**
+- "Backspace/Delete should be split": Ink maps the Backspace key (`\x7f`) to `key.delete` on most
+  terminals (see ink `parse-keypress`), so splitting them would *break* Backspace. Kept combined.
+- "useInput captures a stale `submit`": Ink's `useInput` lists the handler in its effect deps and
+  re-subscribes every render, so closures are always fresh (confirmed in ink source + live tests).
+- "Mentions not tracked while the buffer is active": intended — you're already looking at it, and
+  unread/mention badges clear on activate; matches standard IRC clients.
+- ClientView "off-by-2 height / negative innerHeight": the reviewer assumed the input is 1 row, but
+  it's a bordered box = 3 rows, so `rows-5` is correct; panels already clamp inner height ≥1.
+- Deferred as low-value: async/atomic `saveConfig` (tiny user-initiated write, already error-handled),
+  grapheme-aware cursor (consistent UTF-16 is fine), sub-10-row terminal layout.
+
 ## Server quirk discovered (irc.austn.net / Ergo)
 
 - **The server force-auto-joins every client to `#general`** ("You are auto-joined to #general")

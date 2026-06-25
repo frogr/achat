@@ -118,6 +118,8 @@ export type IrcEventHandler = (event: IrcEvent) => void;
 export interface ClientService extends IrcCommands {
   register(password: string, email?: string): void;
   identify(account: string, password: string): void;
+  /** Quit and remove all listeners so an abandoned service can't emit. */
+  dispose(message?: string): void;
 }
 
 /** Factory the UI uses to create a service; swappable in tests. */

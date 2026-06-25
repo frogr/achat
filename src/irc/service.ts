@@ -17,13 +17,23 @@ const MODE_PREFIX: Array<[string, string]> = [
   ['v', '+'],
 ];
 
-function modesToPrefix(modes: string[] | undefined): string {
-  if (!modes || modes.length === 0) return '';
+function modesToPrefix(modes: Iterable<string> | undefined): string {
+  if (!modes) return '';
+  const set = modes instanceof Set ? modes : new Set(modes);
+  if (set.size === 0) return '';
   for (const [mode, symbol] of MODE_PREFIX) {
-    if (modes.includes(mode)) return symbol;
+    if (set.has(mode)) return symbol;
   }
   return '';
 }
+
+/** Internal membership record: full mode set so -mode falls back correctly. */
+interface MemberRec {
+  nick: string;
+  modes: Set<string>;
+}
+
+const PREFIX_MODE_LETTERS = new Set(['q', 'a', 'o', 'h', 'v']);
 
 /**
  * Thin, typed wrapper around irc-framework. Owns the connection, tracks
@@ -35,8 +45,8 @@ export class IrcService implements ClientService {
   private handler: IrcEventHandler;
   private cfg: Config;
   private nick: string;
-  /** channelLower -> (nickLower -> User) */
-  private members = new Map<string, Map<string, User>>();
+  /** channelLower -> (nickLower -> MemberRec) */
+  private members = new Map<string, Map<string, MemberRec>>();
   private loggedIn = false;
   private wantedSasl = false;
 
@@ -82,6 +92,21 @@ export class IrcService implements ClientService {
 
   disconnect(message = 'achat'): void {
     this.client.quit(message);
+  }
+
+  /** Quit (best-effort) and detach all listeners so this abandoned service can
+   * never emit into a stale handler after it's been replaced. */
+  dispose(message = 'achat'): void {
+    try {
+      this.client.quit(message);
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.client.removeAllListeners();
+    } catch {
+      /* ignore */
+    }
   }
 
   join(channel: string): void {
@@ -165,7 +190,11 @@ export class IrcService implements ClientService {
     const map = this.members.get(this.chanKey(channel));
     if (!map) return [];
     const order = '~&@%+';
-    return [...map.values()].sort((a, b) => {
+    const users: User[] = [...map.values()].map((m) => ({
+      nick: m.nick,
+      prefix: modesToPrefix(m.modes),
+    }));
+    return users.sort((a, b) => {
       const ra = a.prefix ? order.indexOf(a.prefix) : 99;
       const rb = b.prefix ? order.indexOf(b.prefix) : 99;
       if (ra !== rb) return ra - rb;
@@ -280,9 +309,9 @@ export class IrcService implements ClientService {
     c.on('userlist', (event: { channel: string; users: Array<{ nick: string; modes?: string[] }> }) => {
       const key = this.chanKey(event.channel);
       this.chanNames.set(key, event.channel);
-      const map = new Map<string, User>();
+      const map = new Map<string, MemberRec>();
       for (const u of event.users) {
-        map.set(u.nick.toLowerCase(), { nick: u.nick, prefix: modesToPrefix(u.modes) });
+        map.set(u.nick.toLowerCase(), { nick: u.nick, modes: new Set(u.modes ?? []) });
       }
       this.members.set(key, map);
       this.emit({ type: 'names', channel: event.channel, users: this.sortedUsers(event.channel) });
@@ -292,7 +321,7 @@ export class IrcService implements ClientService {
       const key = this.chanKey(event.channel);
       this.chanNames.set(key, event.channel);
       if (!this.members.has(key)) this.members.set(key, new Map());
-      this.members.get(key)!.set(event.nick.toLowerCase(), { nick: event.nick, prefix: '' });
+      this.members.get(key)!.set(event.nick.toLowerCase(), { nick: event.nick, modes: new Set() });
       this.emit({ type: 'join', channel: event.channel, nick: event.nick, isSelf: this.isSelf(event.nick) });
       this.emitUserlist(event.channel);
     });
@@ -342,7 +371,7 @@ export class IrcService implements ClientService {
         const old = map?.get(event.nick.toLowerCase());
         if (map && old) {
           map.delete(event.nick.toLowerCase());
-          map.set(event.new_nick.toLowerCase(), { nick: event.new_nick, prefix: old.prefix });
+          map.set(event.new_nick.toLowerCase(), { nick: event.new_nick, modes: old.modes });
         }
       }
       this.emit({ type: 'nick', oldNick: event.nick, newNick: event.new_nick, isSelf, channels });
@@ -353,10 +382,36 @@ export class IrcService implements ClientService {
       this.emit({ type: 'topic', channel: event.channel, topic: event.topic, nick: event.nick });
     });
 
-    c.on('mode', (event: { target: string; nick?: string; raw_modes?: string; modes?: unknown }) => {
-      const desc = typeof event.raw_modes === 'string' ? event.raw_modes : '';
-      this.emit({ type: 'mode', target: event.target, mode: desc, by: event.nick });
-    });
+    c.on(
+      'mode',
+      (event: {
+        target: string;
+        nick?: string;
+        raw_modes?: string;
+        modes?: Array<{ mode: string; param?: string | null }>;
+      }) => {
+        const desc = typeof event.raw_modes === 'string' ? event.raw_modes : '';
+        // Apply user prefix-mode changes (+o/-o/+v/…) to membership in real time.
+        const map = this.members.get(this.chanKey(event.target));
+        if (map && Array.isArray(event.modes)) {
+          let changed = false;
+          for (const m of event.modes) {
+            const add = m.mode.startsWith('+');
+            const letter = m.mode.replace(/^[+-]/, '');
+            if (PREFIX_MODE_LETTERS.has(letter) && m.param) {
+              const rec = map.get(m.param.toLowerCase());
+              if (rec) {
+                if (add) rec.modes.add(letter);
+                else rec.modes.delete(letter);
+                changed = true;
+              }
+            }
+          }
+          if (changed) this.emitUserlist(event.target);
+        }
+        this.emit({ type: 'mode', target: event.target, mode: desc, by: event.nick });
+      },
+    );
 
     c.on('whois', (event: WhoisEvent) => {
       this.emit({ type: 'whois', nick: event.nick, lines: formatWhois(event) });

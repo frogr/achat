@@ -153,8 +153,10 @@ export function App({
       credsRef.current = { account: next.account, password: next.password };
       setPhase('main');
       setFormError(undefined);
+      // Fully tear down any prior service so its listeners can't fire into the
+      // new handler.
       try {
-        serviceRef.current?.disconnect('reconnecting');
+        serviceRef.current?.dispose('reconnecting');
       } catch {
         /* ignore */
       }
@@ -170,7 +172,7 @@ export function App({
     if (hasAccount(config)) startConnection(config, 'login');
     return () => {
       try {
-        serviceRef.current?.disconnect('achat closing');
+        serviceRef.current?.dispose('achat closing');
       } catch {
         /* ignore */
       }
@@ -306,6 +308,9 @@ export function App({
       if (key.rightArrow) return setCursor((c) => Math.min(inputValue.length, c + 1));
       if (key.upArrow) return d({ type: 'scroll', delta: 1 });
       if (key.downArrow) return d({ type: 'scroll', delta: -1 });
+      // NOTE: Ink maps the Backspace key (\x7f) to key.delete on most terminals
+      // (see ink parse-keypress), so treat both as backspace — splitting them
+      // would break Backspace on macOS.
       if (key.backspace || key.delete) {
         if (cursor > 0) {
           setInputValue(inputValue.slice(0, cursor - 1) + inputValue.slice(cursor));

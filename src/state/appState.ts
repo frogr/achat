@@ -239,12 +239,17 @@ export function applyEvent(state: AppState, event: IrcEvent): AppState {
     }
 
     case 'self-message':
-      return addLine(state, event.target, {
-        kind: event.isAction ? 'action' : 'message',
-        from: state.nick,
-        text: event.text,
-        self: true,
-      });
+      return addLine(
+        state,
+        event.target,
+        {
+          kind: event.isAction ? 'action' : 'message',
+          from: state.nick,
+          text: event.text,
+          self: true,
+        },
+        { ensure: 'channel-or-query' },
+      );
 
     case 'join': {
       let s = ensureBuffer(state, event.channel, 'channel');
@@ -289,12 +294,14 @@ export function applyEvent(state: AppState, event: IrcEvent): AppState {
         (acc, ch) => addLine(acc, ch, { kind: 'nick', text: `${event.oldNick} is now known as ${event.newNick}` }),
         s,
       );
-      // rename an open query buffer if present
+      // rename an open query buffer if present (and keep `active` pointing at it)
       const q = findBuffer(s, event.oldNick);
       if (q && q.type === 'query') {
+        const wasActive = q.name.toLowerCase() === s.active.toLowerCase();
         s = {
           ...s,
           buffers: s.buffers.map((b) => (b === q ? { ...b, name: event.newNick } : b)),
+          active: wasActive ? event.newNick : s.active,
         };
       }
       return s;

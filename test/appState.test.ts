@@ -137,6 +137,27 @@ test('server buffer cannot be closed', () => {
   assert.ok(findBuffer(s, SERVER_BUFFER));
 });
 
+test('self-message to a new target creates a query buffer (not server)', () => {
+  let s = fresh();
+  s = irc(s, { type: 'self-message', target: 'dave', text: 'hello', isAction: false });
+  const b = findBuffer(s, 'dave');
+  assert.ok(b, 'query buffer should be created');
+  assert.equal(b!.type, 'query');
+  assert.equal(b!.lines.length, 1);
+  assert.equal(findBuffer(s, SERVER_BUFFER)!.lines.length, 0);
+});
+
+test('renaming the active query buffer on NICK keeps it active', () => {
+  let s = fresh();
+  s = irc(s, { type: 'message', target: 'Bob', from: 'Bob', text: 'hi', isAction: false, isNotice: false });
+  s = reducer(s, { type: 'setActive', name: 'Bob' });
+  s = irc(s, { type: 'nick', oldNick: 'Bob', newNick: 'bobby', isSelf: false, channels: [] });
+  assert.ok(findBuffer(s, 'bobby'), 'buffer renamed');
+  assert.equal(s.active, 'bobby', 'active follows the rename');
+  // activeBuffer should resolve to the renamed query, not fall back to server
+  assert.equal(activeBuffer(s).name, 'bobby');
+});
+
 test('mentions() matches whole words case-insensitively', () => {
   assert.equal(mentions('hey austin!', 'austin'), true);
   assert.equal(mentions('AUSTIN: hi', 'austin'), true);

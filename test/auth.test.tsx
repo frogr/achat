@@ -41,6 +41,9 @@ function makeFake() {
       disconnect() {
         calls.disconnect++;
       },
+      dispose() {
+        calls.disconnect++;
+      },
       join(ch: string) {
         calls.join.push(ch);
       },
