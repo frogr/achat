@@ -42,6 +42,7 @@ export function App({
       initialState({ nick: config.nick, account: config.account, host: config.host, port: config.port }),
   );
   const [inputValue, setInputValue] = useState('');
+  const [cursor, setCursor] = useState(0);
   const [formError, setFormError] = useState<string | undefined>(undefined);
   const [formBusy] = useState(false);
   const [saveHint, setSaveHint] = useState(false);
@@ -162,10 +163,15 @@ export function App({
 
   // ---- input handling -------------------------------------------------------
 
-  const onInputSubmit = useCallback(
+  const clearInput = useCallback(() => {
+    setInputValue('');
+    setCursor(0);
+  }, []);
+
+  const submit = useCallback(
     (raw: string) => {
       const text = raw.trim();
-      setInputValue('');
+      clearInput();
       if (!text) return;
       const buf = activeBuffer(state);
       if (text.startsWith('/')) {
@@ -179,26 +185,82 @@ export function App({
       }
       serviceRef.current?.say(buf.name, text);
     },
-    [state, d],
+    [state, d, clearInput],
   );
 
-  // ---- main-view global keys ------------------------------------------------
+  const saveCreds = useCallback(() => {
+    const creds = credsRef.current;
+    if (creds.account && creds.password) {
+      try {
+        const path = saveConfig({ ...cfgRef.current, ...creds });
+        setSaveHint(false);
+        d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: `✓ Saved config to ${path}` });
+      } catch (err) {
+        d({ target: SERVER_BUFFER, type: 'localLine', kind: 'error', text: `Could not save: ${(err as Error).message}` });
+      }
+    } else {
+      d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: 'Nothing to save — no credentials this session.' });
+    }
+  }, [d]);
 
+  const openQueryForSelectedUser = useCallback(() => {
+    const buf = activeBuffer(state);
+    const u = buf.users[state.userIndex];
+    if (!u) return;
+    d({ type: 'openBuffer', name: u.nick, btype: 'query', activate: true });
+    serviceRef.current?.whois(u.nick);
+    d({ type: 'setFocus', focus: 'messages' });
+  }, [state, d]);
+
+  // ---- single global key handler (no conflict between typing & navigation) --
+
+  const PAGE = 10;
   useInput(
     (input, key) => {
-      if (key.ctrl && input === 's') {
-        const creds = credsRef.current;
-        if (creds.account && creds.password) {
-          try {
-            const path = saveConfig({ ...cfgRef.current, ...creds });
-            setSaveHint(false);
-            d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: `✓ Saved config to ${path}` });
-          } catch (err) {
-            d({ target: SERVER_BUFFER, type: 'localLine', kind: 'error', text: `Could not save: ${(err as Error).message}` });
-          }
-        } else {
-          d({ target: SERVER_BUFFER, type: 'localLine', kind: 'system', text: 'Nothing to save — no credentials this session.' });
+      // global keys, any focus
+      if (key.ctrl && input === 's') return saveCreds();
+      if (key.tab) return d({ type: 'cycleFocus', dir: key.shift ? -1 : 1 });
+      if (key.escape) return d({ type: 'setFocus', focus: 'messages' });
+      if (key.pageUp) return d({ type: 'scroll', delta: PAGE });
+      if (key.pageDown) return d({ type: 'scroll', delta: -PAGE });
+
+      const focus = state.focus;
+
+      // navigation mode: a side panel is focused, input is inert
+      if (focus === 'channels' || focus === 'users') {
+        if (key.upArrow || input === 'k') return d({ type: 'moveSelection', dir: -1 });
+        if (key.downArrow || input === 'j') return d({ type: 'moveSelection', dir: 1 });
+        if (input === '1') return d({ type: 'setFocus', focus: 'channels' });
+        if (input === '2') return d({ type: 'setFocus', focus: 'messages' });
+        if (input === '3') return d({ type: 'setFocus', focus: 'users' });
+        if (key.return) {
+          if (focus === 'channels') return d({ type: 'activateSelection' });
+          return openQueryForSelectedUser();
         }
+        return; // swallow everything else while navigating
+      }
+
+      // typing mode: the input line is focused
+      if (key.return) return submit(inputValue);
+      if (key.leftArrow) return setCursor((c) => Math.max(0, c - 1));
+      if (key.rightArrow) return setCursor((c) => Math.min(inputValue.length, c + 1));
+      if (key.upArrow) return d({ type: 'scroll', delta: 1 });
+      if (key.downArrow) return d({ type: 'scroll', delta: -1 });
+      if (key.backspace || key.delete) {
+        if (cursor > 0) {
+          setInputValue(inputValue.slice(0, cursor - 1) + inputValue.slice(cursor));
+          setCursor(cursor - 1);
+        }
+        return;
+      }
+      // digits jump panels only when the input is empty (documented rule)
+      if (inputValue.length === 0 && !key.ctrl && !key.meta && (input === '1' || input === '3')) {
+        return d({ type: 'setFocus', focus: input === '1' ? 'channels' : 'users' });
+      }
+      // printable insert
+      if (input && !key.ctrl && !key.meta) {
+        setInputValue(inputValue.slice(0, cursor) + input + inputValue.slice(cursor));
+        setCursor(cursor + input.length);
       }
     },
     { isActive: phase === 'main' },
@@ -249,13 +311,5 @@ export function App({
     ? 'Ctrl-S save credentials · Tab/1-2-3 focus · Enter send · PgUp/PgDn scroll · Ctrl-C quit'
     : undefined;
 
-  return (
-    <ClientView
-      state={state}
-      inputValue={inputValue}
-      onInputChange={setInputValue}
-      onInputSubmit={onInputSubmit}
-      hint={hint}
-    />
-  );
+  return <ClientView state={state} inputValue={inputValue} inputCursor={cursor} hint={hint} />;
 }

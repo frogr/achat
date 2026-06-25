@@ -11,8 +11,7 @@ import { InputLine } from './InputLine.js';
 export interface ClientViewProps {
   state: AppState;
   inputValue: string;
-  onInputChange: (v: string) => void;
-  onInputSubmit: (v: string) => void;
+  inputCursor: number;
   hint?: string;
 }
 
@@ -22,8 +21,7 @@ const DEFAULT_HINT =
 export function ClientView({
   state,
   inputValue,
-  onInputChange,
-  onInputSubmit,
+  inputCursor,
   hint,
 }: ClientViewProps): React.ReactElement {
   const { stdout } = useStdout();
@@ -75,8 +73,7 @@ export function ClientView({
       </Box>
       <InputLine
         value={inputValue}
-        onChange={onInputChange}
-        onSubmit={onInputSubmit}
+        cursor={inputCursor}
         focused={inputFocused}
         target={buf.name === '*server*' ? '[server]' : buf.name}
       />

@@ -102,6 +102,21 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   incoming message (nick-colored), the join lines, and a 2-user list. Plus a deterministic
   wiring unit test via the fake service.
 
+## Phase 5 — Focus + navigation + channel switching
+
+- **One custom line editor in a single global `useInput`** instead of ink-text-input for the
+  chat line. · Two `useInput` handlers both receive every key, which makes "digit navigates
+  when the input is empty" impossible without double-handling. Owning all key routing in one
+  place removes the conflict entirely (forms still use ink-text-input — no nav there).
+- **Input-vs-navigation rule:** the input line is focused by default; **Tab/Shift-Tab** cycle
+  panels, **1/3** jump to Channels/Users *only when the input is empty* (2 returns to the
+  input), **Esc** always returns to the input. In a side panel ↑↓ or j/k select and Enter acts
+  (Channels→switch, Users→open query + whois). · Matches the brief's chosen rule.
+  Known tradeoff: to start a message with a literal 1/3, type another char first.
+- **Arrows in the input** move the cursor; **↑↓** scroll when not editing horizontally;
+  **PgUp/PgDn** page the scrollback. Verified via unit tests driving real keystrokes through
+  ink-testing-library (channel switch, users→query, typing-then-digit stays literal).
+
 ### Deferred / revisit
 
 - SASL EXTERNAL (CertFP) — stretch; default to SASL PLAIN over TLS first.

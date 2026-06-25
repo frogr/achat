@@ -93,6 +93,79 @@ test('wiring: live events render channel, messages, and users', async () => {
   unmount();
 });
 
+test('navigation: focus channels, select, Enter switches active channel', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = render(
+    <App config={base} autoConnect={false} createService={fake.factory} />,
+  );
+  await tick();
+  stdin.write('3'); // guest
+  await tick();
+  fake.emit({ type: 'registered', nick: 'austin' });
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  fake.emit({ type: 'join', channel: '#bbb', nick: 'austin', isSelf: true });
+  await tick();
+  // active is #bbb (latest self-join); messages title reflects it
+  assert.match(lastFrame() ?? '', /#bbb \[2\]/);
+
+  stdin.write('1'); // focus channels (input empty)
+  await tick();
+  stdin.write('k'); // move selection up: #bbb -> #aaa
+  await tick();
+  stdin.write('\r'); // activate selection
+  await tick();
+  assert.match(lastFrame() ?? '', /#aaa \[2\]/);
+  unmount();
+});
+
+test('navigation: typing then digit does not switch focus', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = render(
+    <App config={base} autoConnect={false} createService={fake.factory} />,
+  );
+  await tick();
+  stdin.write('3');
+  await tick();
+  fake.emit({ type: 'registered', nick: 'austin' });
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  await tick();
+  stdin.write('hi'); // start typing
+  await tick();
+  stdin.write('1'); // should be literal, not a focus jump
+  await tick();
+  assert.match(lastFrame() ?? '', /hi1/);
+  unmount();
+});
+
+test('navigation: Users panel Enter opens a query buffer', async () => {
+  const fake = makeFake();
+  const { stdin, lastFrame, unmount } = render(
+    <App config={base} autoConnect={false} createService={fake.factory} />,
+  );
+  await tick();
+  stdin.write('3'); // guest
+  await tick();
+  fake.emit({ type: 'registered', nick: 'austin' });
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  fake.emit({
+    type: 'names',
+    channel: '#aaa',
+    users: [
+      { nick: 'austin', prefix: '@' },
+      { nick: 'zelda', prefix: '' },
+    ],
+  });
+  await tick();
+  stdin.write('3'); // focus users (input empty)
+  await tick();
+  stdin.write('j'); // select second user (zelda)
+  await tick();
+  stdin.write('\r'); // open query
+  await tick();
+  assert.match(lastFrame() ?? '', /zelda \[2\]/);
+  unmount();
+});
+
 test('register flow: submits form, calls NickServ, detects success', async () => {
   const fake = makeFake();
   const { stdin, lastFrame, unmount } = render(

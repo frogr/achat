@@ -1,32 +1,47 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import TextInput from 'ink-text-input';
 
 export interface InputLineProps {
   value: string;
-  onChange: (v: string) => void;
-  onSubmit: (v: string) => void;
+  cursor: number;
   focused: boolean;
   /** label shown before the prompt, e.g. the active target */
   target: string;
+  placeholder?: string;
 }
 
-/** Bottom input line. The `>` prompt turns green when the input is focused. */
-export function InputLine({ value, onChange, onSubmit, focused, target }: InputLineProps): React.ReactElement {
+/**
+ * Presentational input line. All key handling lives in App's single global
+ * useInput so navigation vs. typing never conflict; this just renders the
+ * value with a block cursor.
+ */
+export function InputLine({
+  value,
+  cursor,
+  focused,
+  target,
+  placeholder = 'type a message or /command…',
+}: InputLineProps): React.ReactElement {
+  const showPlaceholder = focused && value.length === 0;
+  const before = value.slice(0, cursor);
+  const at = value.slice(cursor, cursor + 1) || ' ';
+  const after = value.slice(cursor + 1);
+
   return (
     <Box borderStyle="round" borderColor={focused ? 'green' : 'gray'} paddingX={1} flexShrink={0}>
       <Text color={focused ? 'green' : 'gray'} bold>
         {target}{' '}
       </Text>
       <Text color={focused ? 'green' : 'gray'}>❯ </Text>
-      <TextInput
-        value={value}
-        onChange={onChange}
-        onSubmit={onSubmit}
-        focus={focused}
-        placeholder="type a message or /command…"
-        showCursor
-      />
+      {showPlaceholder ? (
+        <Text dimColor>{placeholder}</Text>
+      ) : (
+        <Text>
+          {before}
+          <Text inverse={focused}>{at}</Text>
+          {after}
+        </Text>
+      )}
     </Box>
   );
 }
