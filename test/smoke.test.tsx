@@ -16,7 +16,7 @@ const cfg: Config = {
 };
 
 test('App renders the achat banner and connection target', () => {
-  const { lastFrame, unmount } = render(<App config={cfg} />);
+  const { lastFrame, unmount } = render(<App config={cfg} autoConnect={false} />);
   const frame = lastFrame() ?? '';
   assert.match(frame, /achat/);
   assert.match(frame, /irc\.austn\.net/);

@@ -31,7 +31,28 @@ A running log of decisions made during the autonomous build of `achat`. Format:
   Let's Encrypt cert at build time, so we develop against the real server (no need for
   the `testnet.ergo.chat` fallback). · Per brief.
 
+## Phase 1 — Connect + raw event pipe
+
+- **`IrcService` translates irc-framework events → one typed `IrcEvent` union.**
+  The whole app consumes that union; irc-framework's loose payloads never leak past
+  the service. · Keeps the UI/state testable and the protocol lib swappable in theory.
+- **Service owns per-channel membership** (`Map<chan, Map<nick, User>>`). · irc-framework's
+  `quit`/`nick` events don't say which channels were affected, so we track membership
+  and fan those events out to the right buffers ourselves. Also lets us re-sort the
+  user list by prefix (~ & @ % +) on every change.
+- **mode→prefix mapping hardcoded** (q~ a& o@ h% v+). · Ergo uses the standard PREFIX;
+  reading network.options.PREFIX dynamically is a stretch refinement.
+- **`raw` event surfaces every incoming server line** for the Phase-1 log; later phases
+  consume the structured events instead. · Satisfies "raw event pipe" cheaply.
+- **Verified headlessly** via `scripts/verify-irc.mjs` (drives the service without Ink):
+  against irc.austn.net we observed connect → guest registration → MOTD → join #general →
+  NAMES/userlist → clean disconnect. · Ink's in-place rendering is hard to assert from a
+  captured file, so service-level verification is the source of truth; a pty smoke confirms
+  the TUI launches without crashing.
+
 ### Deferred / revisit
 
 - SASL EXTERNAL (CertFP) — stretch; default to SASL PLAIN over TLS first.
 - `tsup`/`npm publish` packaging — after the client is feature-complete.
+- Full auto-reconnect/rejoin behaviour is wired (irc-framework `auto_reconnect`) but
+  exercised/verified in Phase 8.
