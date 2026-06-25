@@ -12,12 +12,13 @@ export interface PaletteItem {
 export interface CommandPaletteProps {
   items: PaletteItem[];
   onClose: () => void;
+  title?: string;
 }
 
 const MAX_VISIBLE = 10;
 
-/** Ctrl-K command palette: fuzzy-filter a list of actions and run one. */
-export function CommandPalette({ items, onClose }: CommandPaletteProps): React.ReactElement {
+/** Fuzzy-filterable action palette (Ctrl-K commands, user menus, etc). */
+export function CommandPalette({ items, onClose, title = 'palette' }: CommandPaletteProps): React.ReactElement {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
 
@@ -60,7 +61,7 @@ export function CommandPalette({ items, onClose }: CommandPaletteProps): React.R
       <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={2} paddingY={1} width={64}>
         <Box>
           <Text color="green" bold>
-            ⌘ palette{' '}
+            ⌘ {title}{' '}
           </Text>
           <Text>❯ </Text>
           <Text>{query}</Text>

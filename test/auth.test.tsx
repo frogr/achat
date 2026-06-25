@@ -177,7 +177,7 @@ test('navigation: typing then digit does not switch focus', async () => {
   unmount();
 });
 
-test('navigation: Users panel Enter opens a query buffer', async () => {
+test('navigation: Users panel Enter opens a user menu; Message opens a query', async () => {
   const fake = makeFake();
   const { stdin, lastFrame, unmount } = render(
     <App config={base} autoConnect={false} createService={fake.factory} />,
@@ -200,7 +200,12 @@ test('navigation: Users panel Enter opens a query buffer', async () => {
   await tick();
   stdin.write('j'); // select second user (zelda)
   await tick();
-  stdin.write('\r'); // open query
+  stdin.write('\r'); // open the user menu
+  await tick();
+  assert.match(lastFrame() ?? '', /user · zelda/);
+  assert.match(lastFrame() ?? '', /Message zelda/);
+  assert.match(lastFrame() ?? '', /Whois zelda/);
+  stdin.write('\r'); // run the first action: Message -> opens query
   await tick();
   assert.match(lastFrame() ?? '', /zelda \[2\]/);
   unmount();

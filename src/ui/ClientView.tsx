@@ -16,7 +16,7 @@ export interface ClientViewProps {
 }
 
 const DEFAULT_HINT =
-  'Tab/1-3 focus · Enter act · j/k select · PgUp/PgDn scroll · Esc live · Ctrl-K palette · /help · Ctrl-C quit';
+  'Tab/1-3 focus · j/k select · Enter act · Ctrl-U/D scroll · Esc live · Ctrl-K palette · /help · Ctrl-C quit';
 
 export function ClientView({
   state,

@@ -97,10 +97,12 @@ You can also register/identify after connecting:
 | `Esc` | Return to the input and jump to the latest messages |
 | `↑` `↓` or `j` `k` | Move the selection in the focused panel (Channels / Users) |
 | `Enter` (Channels) | Switch to the selected channel |
-| `Enter` (Users) | Open a private query with the selected user (+ whois) |
+| `Enter` (Users) | Open the user action menu (Message / Whois / Mention) |
 | `Enter` (input) | Send the message / run the command |
 | `←` `→` | Move the cursor in the input |
-| `PgUp` / `PgDn` | Scroll the message scrollback; `Esc` jumps back to live |
+| `Ctrl-U` / `Ctrl-D` | Scroll the message scrollback up / down (works on laptops) |
+| `PgUp` / `PgDn` | Same as Ctrl-U/Ctrl-D (needs `Fn` on most laptops) |
+| `↑` / `↓` | Scroll one line (while the input is focused) |
 | `Ctrl-K` | Open the command palette (fuzzy filter, Enter to run) |
 | `Ctrl-S` | Save account credentials to the config file |
 | `Ctrl-C` | Quit |

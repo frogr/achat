@@ -49,7 +49,7 @@ export function App({
   const [formError, setFormError] = useState<string | undefined>(undefined);
   const [formBusy] = useState(false);
   const [saveHint, setSaveHint] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [palette, setPalette] = useState<{ title: string; items: PaletteItem[] } | null>(null);
 
   const serviceRef = useRef<ReturnType<ServiceFactory> | null>(null);
   const intentRef = useRef<AuthIntent>('guest');
@@ -261,14 +261,45 @@ export function App({
     [state, d, clearInput, actions, sendPlain],
   );
 
-  const openQueryForSelectedUser = useCallback(() => {
+  // Plain function (recreated each render) so it captures fresh inputValue/state.
+  const openUserMenu = () => {
     const buf = activeBuffer(state);
     const u = buf.users[state.userIndex];
     if (!u) return;
-    d({ type: 'openBuffer', name: u.nick, btype: 'query', activate: true });
-    serviceRef.current?.whois(u.nick);
-    d({ type: 'setFocus', focus: 'messages' });
-  }, [state, d]);
+    const nick = u.nick;
+    const items: PaletteItem[] = [
+      {
+        id: 'msg',
+        label: `Message ${nick}`,
+        hint: 'open a private query',
+        run: () => {
+          d({ type: 'openBuffer', name: nick, btype: 'query', activate: true });
+          d({ type: 'setFocus', focus: 'messages' });
+        },
+      },
+      {
+        id: 'whois',
+        label: `Whois ${nick}`,
+        hint: 'look up this user',
+        run: () => {
+          serviceRef.current?.whois(nick);
+          d({ type: 'setFocus', focus: 'messages' });
+        },
+      },
+      {
+        id: 'mention',
+        label: `Mention ${nick}`,
+        hint: 'insert into the input',
+        run: () => {
+          const nv = inputValue.length > 0 ? `${inputValue.replace(/\s*$/, '')} ${nick} ` : `${nick}: `;
+          setInputValue(nv);
+          setCursor(nv.length);
+          d({ type: 'setFocus', focus: 'messages' });
+        },
+      },
+    ];
+    setPalette({ title: `user · ${nick}`, items });
+  };
 
   // ---- single global key handler (no conflict between typing & navigation) --
 
@@ -276,15 +307,16 @@ export function App({
   useInput(
     (input, key) => {
       // global keys, any focus
-      if (key.ctrl && input === 'k') return setPaletteOpen(true);
+      if (key.ctrl && input === 'k') return setPalette({ title: 'palette', items: paletteItems });
       if (key.ctrl && input === 's') return saveCreds();
       if (key.tab) return d({ type: 'cycleFocus', dir: key.shift ? -1 : 1 });
       if (key.escape) {
         d({ type: 'setFocus', focus: 'messages' });
         return d({ type: 'scrollToLatest' });
       }
-      if (key.pageUp) return d({ type: 'scroll', delta: PAGE });
-      if (key.pageDown) return d({ type: 'scroll', delta: -PAGE });
+      // scrollback paging — PgUp/PgDn for full keyboards, Ctrl-U/Ctrl-D for laptops
+      if (key.pageUp || (key.ctrl && input === 'u')) return d({ type: 'scroll', delta: PAGE });
+      if (key.pageDown || (key.ctrl && input === 'd')) return d({ type: 'scroll', delta: -PAGE });
 
       const focus = state.focus;
 
@@ -297,7 +329,7 @@ export function App({
         if (input === '3') return d({ type: 'setFocus', focus: 'users' });
         if (key.return) {
           if (focus === 'channels') return d({ type: 'activateSelection' });
-          return openQueryForSelectedUser();
+          return openUserMenu();
         }
         return; // swallow everything else while navigating
       }
@@ -328,7 +360,7 @@ export function App({
         setCursor(cursor + input.length);
       }
     },
-    { isActive: phase === 'main' && !paletteOpen },
+    { isActive: phase === 'main' && !palette },
   );
 
   const paletteItems: PaletteItem[] = useMemo(() => {
@@ -402,12 +434,12 @@ export function App({
       />
     );
 
-  if (paletteOpen) {
-    return <CommandPalette items={paletteItems} onClose={() => setPaletteOpen(false)} />;
+  if (palette) {
+    return <CommandPalette title={palette.title} items={palette.items} onClose={() => setPalette(null)} />;
   }
 
   const hint = saveHint
-    ? 'Ctrl-S save credentials · Tab/1-3 focus · Enter send · PgUp/PgDn scroll · Ctrl-K palette · Ctrl-C quit'
+    ? 'Ctrl-S save · Tab/1-3 focus · Enter act · Ctrl-U/D scroll · Ctrl-K palette · Ctrl-C quit'
     : undefined;
 
   return <ClientView state={state} inputValue={inputValue} inputCursor={cursor} hint={hint} />;
