@@ -71,12 +71,30 @@ A running log of decisions made during the autonomous build of `achat`. Format:
 - **Service factory is injectable** (`createService` prop) so the auth flow is unit-tested
   with a fake (no sockets): guest connect, register form → NickServ → success detection.
 
+## Phase 3 — Static 3-panel layout
+
+- **Single pure reducer (`state/appState.ts`) is the source of truth** for buffers, active
+  buffer, focus, selection, and scroll. Ink-free so it's unit-tested without a terminal
+  (23 reducer tests). · Keeps keyboard handling and rendering simple and testable.
+- **Buffers unify channels, queries, and the `*server*` buffer.** The Channels panel lists
+  them all (server first). · One model for everything that can hold lines.
+- **Messages are pre-wrapped to visual rows** (`lib/format.wrapText`) before slicing to the
+  panel height. · Guarantees the layout never overflows and makes scrollback math exact,
+  while still soft-wrapping long messages (vs. truncating chat content).
+- **Proportional panel widths** (channels ~18%, users ~16%, messages flex) read live
+  `stdout` dimensions each render; Ink re-renders on resize. · Adapts to terminal size.
+- **Presentational panels** (Channels/Messages/Users/Input/Bars) take plain props; all logic
+  lives in the reducer/container. Verified with a render test + an ASCII frame dump
+  (`scripts/demo-layout.mjs`) that matches the brief's mockup.
+
 ### Deferred / revisit
 
 - SASL EXTERNAL (CertFP) — stretch; default to SASL PLAIN over TLS first.
 - Registration success/failure is detected by regex on NickServ's text; if a server uses
   required email verification, the account won't be usable until verified — surfaced to the
   user via the raw NickServ message regardless.
+- Resize is handled by Ink's native resize events + proportional widths; not asserted in the
+  test harness (ink-testing-library pins terminal columns).
 - `tsup`/`npm publish` packaging — after the client is feature-complete.
 - Full auto-reconnect/rejoin behaviour is wired (irc-framework `auto_reconnect`) but
   exercised/verified in Phase 8.
