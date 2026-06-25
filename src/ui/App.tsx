@@ -55,6 +55,8 @@ export function App({
   const intentRef = useRef<AuthIntent>('guest');
   const registerRef = useRef<{ password: string; email: string } | null>(null);
   const cfgRef = useRef<Config>(config);
+  /** channels we're currently in, for rejoin on reconnect (lowercased -> name) */
+  const joinedRef = useRef<Map<string, string>>(new Map());
   const credsRef = useRef<{ account?: string; password?: string }>({
     account: config.account,
     password: config.password,
@@ -102,8 +104,10 @@ export function App({
             credsRef.current = { account: event.account, password: cfgRef.current.password };
             setSaveHint(true);
           }
-          // auto-join configured channels (also covers rejoin on reconnect)
-          for (const ch of cfgRef.current.channels) serviceRef.current?.join(ch);
+          // rejoin everything: configured channels ∪ channels joined this session
+          const toJoin = new Set<string>(cfgRef.current.channels);
+          for (const name of joinedRef.current.values()) toJoin.add(name);
+          for (const ch of toJoin) serviceRef.current?.join(ch);
           // kick off NickServ registration if that was the intent
           if (intentRef.current === 'register' && registerRef.current) {
             const { password, email } = registerRef.current;
@@ -111,6 +115,15 @@ export function App({
           }
           break;
         }
+        case 'join':
+          if (event.isSelf) joinedRef.current.set(event.channel.toLowerCase(), event.channel);
+          break;
+        case 'part':
+          if (event.isSelf) joinedRef.current.delete(event.channel.toLowerCase());
+          break;
+        case 'kick':
+          if (event.isSelf) joinedRef.current.delete(event.channel.toLowerCase());
+          break;
         case 'status':
           if (event.status === 'guest' && intentRef.current === 'login') {
             d({

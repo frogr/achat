@@ -131,6 +131,14 @@ export class IrcService implements ClientService {
     this.client.say('NickServ', `IDENTIFY ${account} ${password}`);
   }
 
+  /** Test-only: abruptly destroy the underlying socket to simulate a network
+   * drop, which triggers irc-framework's auto-reconnect. */
+  __debugDropSocket(): void {
+    const conn = (this.client as unknown as { connection?: { transport?: { socket?: { destroy?: () => void } } } })
+      .connection;
+    conn?.transport?.socket?.destroy?.();
+  }
+
   // ---- membership helpers ---------------------------------------------------
 
   private chanKey(channel: string): string {

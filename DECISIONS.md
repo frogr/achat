@@ -147,6 +147,21 @@ A running log of decisions made during the autonomous build of `achat`. Format:
 - Verified: fuzzy unit tests, a palette keystroke test (Ctrl-K → filter → Enter switches
   buffer), and frame dumps (`scripts/demo-palette.mjs`, `scripts/demo-badges.mjs`).
 
+## Phase 8 — Resilience + distribution + docs
+
+- **Auto-reconnect** via irc-framework (`auto_reconnect`, 10 retries, exponential backoff). On an
+  unexpected drop the status bar shows "reconnecting…"; on re-registration the App **rejoins every
+  channel** (configured ∪ joined-this-session, tracked in a `joinedRef`). · Verified with a real
+  socket drop (`scripts/verify-reconnect.mjs`): drop → reconnecting → connecting → registered #2.
+- **irc-framework only reconnects if "safely registered" (>5s).** · Guards against aKill loops;
+  documented so it's not mistaken for a bug (an immediate post-connect drop won't reconnect).
+- **Distribution = `npm link` now.** `dist/` is built by `npm run build`; `bin.achat → dist/cli.js`
+  with a preserved shebang; `prepublishOnly` builds for a future `npm publish` (→ `npm i -g achat`).
+  · Avoided bundling (tsup) — unnecessary for link/publish of a plain ESM CLI.
+- **Docs:** README covers install, config, the full auth flow (SASL/guest/register), a keybindings
+  table, all slash commands, resilience, the #general auto-join quirk, dev/verify scripts, and the
+  architecture. DECISIONS (this file) is the running rationale.
+
 ## Server quirk discovered (irc.austn.net / Ergo)
 
 - **The server force-auto-joins every client to `#general`** ("You are auto-joined to #general")

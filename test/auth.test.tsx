@@ -278,6 +278,23 @@ test('command palette: Ctrl-K, filter, Enter switches buffer', async () => {
   unmount();
 });
 
+test('resilience: reconnect rejoins channels joined this session', async () => {
+  const fake = makeFake();
+  const { lastFrame, unmount } = await bootGuest(fake);
+  fake.emit({ type: 'join', channel: '#aaa', nick: 'austin', isSelf: true });
+  fake.emit({ type: 'join', channel: '#bbb', nick: 'austin', isSelf: true });
+  await tick();
+  assert.deepEqual(fake.calls.join, []); // joined via events, not service calls
+
+  fake.emit({ type: 'status', status: 'reconnecting', detail: 'attempt 1' });
+  await tick();
+  assert.match(lastFrame() ?? '', /reconnecting/);
+  fake.emit({ type: 'registered', nick: 'austin' });
+  await tick();
+  assert.deepEqual([...fake.calls.join].sort(), ['#aaa', '#bbb']);
+  unmount();
+});
+
 test('register flow: submits form, calls NickServ, detects success', async () => {
   const fake = makeFake();
   const { stdin, lastFrame, unmount } = render(
